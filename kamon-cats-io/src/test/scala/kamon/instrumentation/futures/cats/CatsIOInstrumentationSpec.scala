@@ -10,7 +10,7 @@ import org.scalatest.{Matchers, OptionValues, WordSpec}
 import org.scalatest.concurrent.{Eventually, PatienceConfiguration, ScalaFutures}
 
 import scala.concurrent.ExecutionContext.global
-import scala.concurrent.ExecutionContext
+import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
 
 class CatsIoInstrumentationSpec extends WordSpec with ScalaFutures with Matchers with PatienceConfiguration
@@ -47,6 +47,34 @@ class CatsIoInstrumentationSpec extends WordSpec with ScalaFutures with Matchers
 
 
         eventually(timeout(10 seconds)) {
+          contextTagFuture.value.get.get shouldBe "value"
+        }
+      }
+    }
+    "not clear context" which {
+      "is followed by wrapped futures" in {
+        implicit val ctxShift: ContextShift[IO] = IO.contextShift(global)
+        implicit val es: ExecutionContext =
+          ExecutionContext.fromExecutorService(Executors.newCachedThreadPool())
+
+        val context = Context.of("key", "value")
+        val contextTagAfterTransformations =
+          for {
+            scope <- IO {
+              Kamon.storeContext(context)
+            }
+            _ <- IO.fromFuture(IO(Future("test1"))).map(_.length)
+            _ <- IO.fromFuture(IO(Future("test2"))).map(_.length)
+          } yield {
+            val tagValue = Kamon.currentContext().getTag(plain("key"))
+            scope.close()
+            tagValue
+          }
+
+        val contextTagFuture = contextTagAfterTransformations.unsafeToFuture()
+
+
+        eventually(timeout(1 seconds)) {
           contextTagFuture.value.get.get shouldBe "value"
         }
       }
